@@ -1,240 +1,341 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Image Combiner</title>
     <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 16px;
+        }
+
+        .row {
+            margin: 10px 0;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: center;
+        }
+
+        label {
+            font-size: 14px;
+        }
+
+        input[type="text"] {
+            width: 160px;
+        }
+
         #canvas {
             display: none;
         }
+
         #downloadLink {
             display: none;
             margin-top: 10px;
         }
+
         #preview {
             display: block;
             margin-top: 20px;
             max-width: 100%;
-            max-height: 400px;
+            max-height: 450px;
+            border: 1px solid #ddd;
+        }
+
+        .card {
+            border: 1px solid #e5e5e5;
+            padding: 12px;
+            border-radius: 10px;
+        }
+
+        .hint {
+            color: #666;
+            font-size: 12px;
         }
     </style>
 </head>
+
 <body>
     <h1>Combine Two Pictures</h1>
-    <input type="file" id="file1" accept="image/*">
-    <input type="file" id="file2" accept="image/*">
 
-    <div>
-        <input type="radio" id="vertical" name="orientation" value="vertical" checked>
-        <label for="vertical">Vertical</label>
-        <input type="radio" id="horizontal" name="orientation" value="horizontal">
-        <label for="horizontal">Horizontal</label>
+    <div class="card">
+        <div class="row">
+            <label>Image 1:</label>
+            <input type="file" id="file1" accept="image/*" />
+            <label>Image 2:</label>
+            <input type="file" id="file2" accept="image/*" />
+        </div>
+
+        <div class="row">
+            <label>Orientation:</label>
+            <label><input type="radio" id="vertical" name="orientation" value="vertical" checked /> Vertical</label>
+            <label><input type="radio" id="horizontal" name="orientation" value="horizontal" /> Horizontal</label>
+
+            <label style="margin-left:10px;">Alignment:</label>
+            <select id="alignment">
+                <option value="start">Start</option>
+                <option value="center" selected>Center</option>
+                <option value="end">End</option>
+            </select>
+
+            <span class="hint">(Vertical = left/center/right, Horizontal = top/center/bottom)</span>
+        </div>
+
+        <div class="row">
+            <label for="label1">Label 1:</label>
+            <input type="text" id="label1" value="before" />
+
+            <label for="label2">Label 2:</label>
+            <input type="text" id="label2" value="after" />
+
+            <label for="labelPos">Label Position:</label>
+            <select id="labelPos">
+                <option value="top-left">Top-left</option>
+                <option value="top-right">Top-right</option>
+                <option value="bottom-left">Bottom-left</option>
+                <option value="bottom-right">Bottom-right</option>
+            </select>
+        </div>
+
+        <div class="row">
+            <label for="textColor">Text Color:</label>
+            <input type="color" id="textColor" value="#000000" />
+
+            <label for="fontFamily">Font:</label>
+            <select id="fontFamily">
+                <option value="Arial" selected>Arial</option>
+                <option value="Verdana">Verdana</option>
+                <option value="Times New Roman">Times New Roman</option>
+                <option value="Georgia">Georgia</option>
+                <option value="Courier New">Courier New</option>
+            </select>
+
+            <label for="fontSize">Font Size:</label>
+            <input type="number" id="fontSize" value="22" min="10" max="200" />
+        </div>
+
+        <div class="row">
+            <button id="combineBtn">Combine Images</button>
+            <a id="downloadLink" download="combined-image.png">Download Combined Image</a>
+        </div>
     </div>
-
-    <div>
-        <label for="alignment">Alignment:</label>
-        <select id="alignment">
-            <option value="start">Start</option>
-            <option value="center">Center</option>
-            <option value="end">End</option>
-        </select>
-    </div>
-
-    <div>
-        <label for="textColor">Text Color:</label>
-        <input type="color" id="textColor" value="#000000">
-
-        <label for="fontFamily">Font Family:</label>
-        <select id="fontFamily">
-            <option value="Arial">Arial</option>
-            <option value="Verdana">Verdana</option>
-            <option value="Times New Roman">Times New Roman</option>
-            <option value="Georgia">Georgia</option>
-            <option value="Courier New">Courier New</option>
-        </select>
-
-        <label for="fontSize">Font Size:</label>
-        <input type="number" id="fontSize" value="20" min="10" max="100">
-    </div>
-
-    <button id="combineBtn">Combine Images</button>
-    <a id="downloadLink" download="combined-image.png">Download Combined Image</a>
 
     <canvas id="canvas"></canvas>
-    <img id="preview" alt="Preview of combined image">
+    <img id="preview" alt="Preview of combined image" />
 
     <script>
-        const combineBtn = document.getElementById('combineBtn');
+        // -----------------------------
+        // Helpers: DOM + math
+        // -----------------------------
+        const $ = (id) => document.getElementById(id);
 
-        function computeOffset(container, content, align) {
-            if (align === 'start') return 0;
-            if (align === 'center') return (container - content) / 2;
-            return container - content; // 'end'
+        function clamp(n, min, max) {
+            return Math.max(min, Math.min(max, n));
         }
 
-        function fitContain(srcW, srcH, boxW, boxH) {
+        // start | center | end => offset inside container
+        function alignOffset(container, content, align) {
+            if (align === "start") return 0;
+            if (align === "center") return (container - content) / 2;
+            return container - content; // end
+        }
+
+        // Preserve aspect ratio, fit inside box (no cropping)
+        function containSize(srcW, srcH, boxW, boxH) {
             const scale = Math.min(boxW / srcW, boxH / srcH);
             return { w: srcW * scale, h: srcH * scale };
         }
 
+        // -----------------------------
+        // Image loading
+        // -----------------------------
+        function loadImageFromFile(file) {
+            const url = URL.createObjectURL(file);
+            const img = new Image();
+            img.decoding = "async";
+
+            return new Promise((resolve, reject) => {
+                img.onload = () => resolve({ img, url });
+                img.onerror = reject;
+                img.src = url;
+            });
+        }
+
+        // -----------------------------
+        // Label drawing
+        // -----------------------------
         function labelAnchor(pos) {
             switch (pos) {
-                case 'top-left': return { xAlign: 'start', yAlign: 'start' };
-                case 'top-right': return { xAlign: 'end', yAlign: 'start' };
-                case 'bottom-left': return { xAlign: 'start', yAlign: 'end' };
-                case 'bottom-right': return { xAlign: 'end', yAlign: 'end' };
-                default: return { xAlign: 'start', yAlign: 'start' };
+                case "top-left": return { x: "start", y: "start" };
+                case "top-right": return { x: "end", y: "start" };
+                case "bottom-left": return { x: "start", y: "end" };
+                case "bottom-right": return { x: "end", y: "end" };
+                default: return { x: "start", y: "start" };
             }
         }
 
-        function drawLabelInCell(ctx, text, cellX, cellY, cellW, cellH, pos, fontSize, fontFamily, color) {
+        function drawLabelInCell(ctx, text, cell, opts) {
             if (!text) return;
 
-            const padX = 8, padY = 6;
-            const margin = 10;
+            const {
+                fontSize,
+                fontFamily,
+                textColor,
+                position,
+                paddingX = 8,
+                paddingY = 6,
+                margin = 10,
+                bg = "rgba(255,255,255,0.7)",
+                border = "rgba(0,0,0,0.15)"
+            } = opts;
 
             ctx.save();
             ctx.font = `${fontSize}px ${fontFamily}`;
-            ctx.textBaseline = 'top';
+            ctx.textBaseline = "top";
 
             const metrics = ctx.measureText(text);
             const textW = metrics.width;
             const textH = fontSize;
 
-            const boxW = textW + padX * 2;
-            const boxH = textH + padY * 2;
+            const boxW = textW + paddingX * 2;
+            const boxH = textH + paddingY * 2;
 
-            const { xAlign, yAlign } = labelAnchor(pos);
+            const anchor = labelAnchor(position);
 
-            const x = (xAlign === 'start')
-                ? cellX + margin
-                : cellX + cellW - margin - boxW;
+            const x = (anchor.x === "start")
+                ? cell.x + margin
+                : cell.x + cell.w - margin - boxW;
 
-            const y = (yAlign === 'start')
-                ? cellY + margin
-                : cellY + cellH - margin - boxH;
+            const y = (anchor.y === "start")
+                ? cell.y + margin
+                : cell.y + cell.h - margin - boxH;
 
-            ctx.fillStyle = 'rgba(255,255,255,0.7)';
+            ctx.fillStyle = bg;
             ctx.fillRect(x, y, boxW, boxH);
 
-            ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+            ctx.strokeStyle = border;
             ctx.strokeRect(x, y, boxW, boxH);
 
-            ctx.fillStyle = color;
-            ctx.fillText(text, x + padX, y + padY);
+            ctx.fillStyle = textColor;
+            ctx.fillText(text, x + paddingX, y + paddingY);
 
             ctx.restore();
         }
 
-        combineBtn.addEventListener('click', async () => {
-            const file1 = document.getElementById('file1').files[0];
-            const file2 = document.getElementById('file2').files[0];
+        // -----------------------------
+        // Layout + drawing
+        // -----------------------------
+        function computeCells(orientation, cellW, cellH) {
+            if (orientation === "vertical") {
+                return {
+                    canvasW: cellW,
+                    canvasH: cellH * 2,
+                    cell1: { x: 0, y: 0, w: cellW, h: cellH },
+                    cell2: { x: 0, y: cellH, w: cellW, h: cellH }
+                };
+            }
+            // horizontal
+            return {
+                canvasW: cellW * 2,
+                canvasH: cellH,
+                cell1: { x: 0, y: 0, w: cellW, h: cellH },
+                cell2: { x: cellW, y: 0, w: cellW, h: cellH }
+            };
+        }
 
-            const orientation = document.querySelector('input[name="orientation"]:checked').value;
-            const alignment = document.getElementById('alignment').value;
+        function drawContainedImageInCell(ctx, img, cell, orientation, alignment) {
+            const fitted = containSize(img.naturalWidth, img.naturalHeight, cell.w, cell.h);
 
-            const textColor = document.getElementById('textColor').value;
-            const fontFamily = document.getElementById('fontFamily').value;
-            const fontSize = parseInt(document.getElementById('fontSize').value, 10);
+            // For vertical layout: alignment controls X; Y is centered
+            // For horizontal layout: alignment controls Y; X is centered
+            let dx, dy;
 
-            const label1 = (document.getElementById('label1')?.value ?? 'before').trim();
-            const label2 = (document.getElementById('label2')?.value ?? 'after').trim();
-            const labelPos = document.getElementById('labelPos')?.value ?? 'top-left';
+            if (orientation === "vertical") {
+                dx = cell.x + alignOffset(cell.w, fitted.w, alignment);
+                dy = cell.y + alignOffset(cell.h, fitted.h, "center");
+            } else {
+                dx = cell.x + alignOffset(cell.w, fitted.w, "center");
+                dy = cell.y + alignOffset(cell.h, fitted.h, alignment);
+            }
+
+            ctx.drawImage(img, dx, dy, fitted.w, fitted.h);
+        }
+
+        // -----------------------------
+        // Main action
+        // -----------------------------
+        $("combineBtn").addEventListener("click", async () => {
+            const file1 = $("file1").files[0];
+            const file2 = $("file2").files[0];
 
             if (!file1 || !file2) {
-                alert('Please upload both images.');
+                alert("Please upload both images.");
                 return;
             }
 
-            const canvas = document.getElementById('canvas');
-            const ctx = canvas.getContext('2d');
-            const preview = document.getElementById('preview');
-            const link = document.getElementById('downloadLink');
+            const orientation = document.querySelector('input[name="orientation"]:checked').value;
+            const alignment = $("alignment").value;
 
-            const url1 = URL.createObjectURL(file1);
-            const url2 = URL.createObjectURL(file2);
+            const label1 = ($("label1").value || "before").trim();
+            const label2 = ($("label2").value || "after").trim();
+            const labelPos = $("labelPos").value;
 
-            const img1 = new Image();
-            const img2 = new Image();
-            img1.decoding = 'async';
-            img2.decoding = 'async';
+            const textColor = $("textColor").value;
+            const fontFamily = $("fontFamily").value;
+            const fontSize = clamp(parseInt($("fontSize").value, 10) || 22, 10, 200);
 
-            const loadImage = (img, url) =>
-                new Promise((resolve, reject) => {
-                    img.onload = resolve;
-                    img.onerror = reject;
-                    img.src = url;
-                });
+            const canvas = $("canvas");
+            const ctx = canvas.getContext("2d");
+            const preview = $("preview");
+            const link = $("downloadLink");
 
+            let r1, r2;
             try {
-                await Promise.all([loadImage(img1, url1), loadImage(img2, url2)]);
+                // Load both images
+                [r1, r2] = await Promise.all([
+                    loadImageFromFile(file1),
+                    loadImageFromFile(file2),
+                ]);
 
-                // Shared cell size
+                const img1 = r1.img;
+                const img2 = r2.img;
+
+                // Shared cell size so alignment makes sense
                 const cellW = Math.max(img1.naturalWidth, img2.naturalWidth);
                 const cellH = Math.max(img1.naturalHeight, img2.naturalHeight);
 
-                // Contain scale (no stretching)
-                const a = fitContain(img1.naturalWidth, img1.naturalHeight, cellW, cellH);
-                const b = fitContain(img2.naturalWidth, img2.naturalHeight, cellW, cellH);
+                // Layout
+                const { canvasW, canvasH, cell1, cell2 } = computeCells(orientation, cellW, cellH);
+                canvas.width = canvasW;
+                canvas.height = canvasH;
 
-                if (orientation === 'vertical') {
-                    canvas.width = cellW;
-                    canvas.height = cellH * 2;
+                // Clear + draw images
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                drawContainedImageInCell(ctx, img1, cell1, orientation, alignment);
+                drawContainedImageInCell(ctx, img2, cell2, orientation, alignment);
 
-                    // alignment affects X (left/center/right) inside each cell
-                    const ax = computeOffset(cellW, a.w, alignment);
-                    const bx = computeOffset(cellW, b.w, alignment);
+                // Draw labels
+                const labelOpts = { fontSize, fontFamily, textColor, position: labelPos };
+                drawLabelInCell(ctx, label1, cell1, labelOpts);
+                drawLabelInCell(ctx, label2, cell2, labelOpts);
 
-                    // center vertically inside each cell
-                    const ay = computeOffset(cellH, a.h, 'center');
-                    const by = computeOffset(cellH, b.h, 'center');
-
-                    // cell 1 (top)
-                    ctx.clearRect(0, 0, canvas.width, canvas.height);
-                    ctx.drawImage(img1, ax, ay, a.w, a.h);
-                    drawLabelInCell(ctx, label1, 0, 0, cellW, cellH, labelPos, fontSize, fontFamily, textColor);
-
-                    // cell 2 (bottom)
-                    const y2 = cellH;
-                    ctx.drawImage(img2, bx, y2 + by, b.w, b.h);
-                    drawLabelInCell(ctx, label2, 0, y2, cellW, cellH, labelPos, fontSize, fontFamily, textColor);
-
-                } else {
-                    canvas.width = cellW * 2;
-                    canvas.height = cellH;
-
-                    // alignment affects Y (top/center/bottom) inside each cell
-                    const ay = computeOffset(cellH, a.h, alignment);
-                    const by = computeOffset(cellH, b.h, alignment);
-
-                    // center horizontally inside each cell
-                    const ax = computeOffset(cellW, a.w, 'center');
-                    const bx = computeOffset(cellW, b.w, 'center');
-
-                    // cell 1 (left)
-                    ctx.clearRect(0, 0, canvas.width, canvas.height);
-                    ctx.drawImage(img1, ax, ay, a.w, a.h);
-                    drawLabelInCell(ctx, label1, 0, 0, cellW, cellH, labelPos, fontSize, fontFamily, textColor);
-
-                    // cell 2 (right)
-                    const x2 = cellW;
-                    ctx.drawImage(img2, x2 + bx, by, b.w, b.h);
-                    drawLabelInCell(ctx, label2, x2, 0, cellW, cellH, labelPos, fontSize, fontFamily, textColor);
-                }
-
-                const dataURL = canvas.toDataURL('image/png');
+                // Export + preview
+                const dataURL = canvas.toDataURL("image/png");
                 preview.src = dataURL;
                 link.href = dataURL;
-                link.style.display = 'inline';
-            } catch (e) {
-                console.error(e);
-                alert('Failed to load one of the images.');
+                link.style.display = "inline";
+            } catch (err) {
+                console.error(err);
+                alert("Failed to load one of the images.");
             } finally {
-                URL.revokeObjectURL(url1);
-                URL.revokeObjectURL(url2);
+                // Cleanup object URLs if they exist
+                if (r1?.url) URL.revokeObjectURL(r1.url);
+                if (r2?.url) URL.revokeObjectURL(r2.url);
             }
         });
     </script>
 </body>
+
 </html>
