@@ -65,102 +65,175 @@
     <img id="preview" alt="Preview of combined image">
 
     <script>
-        document.getElementById('combineBtn').addEventListener('click', () => {
+        const combineBtn = document.getElementById('combineBtn');
+
+        function computeOffset(container, content, align) {
+            if (align === 'start') return 0;
+            if (align === 'center') return (container - content) / 2;
+            return container - content; // 'end'
+        }
+
+        function fitContain(srcW, srcH, boxW, boxH) {
+            const scale = Math.min(boxW / srcW, boxH / srcH);
+            return { w: srcW * scale, h: srcH * scale };
+        }
+
+        function labelAnchor(pos) {
+            switch (pos) {
+                case 'top-left': return { xAlign: 'start', yAlign: 'start' };
+                case 'top-right': return { xAlign: 'end', yAlign: 'start' };
+                case 'bottom-left': return { xAlign: 'start', yAlign: 'end' };
+                case 'bottom-right': return { xAlign: 'end', yAlign: 'end' };
+                default: return { xAlign: 'start', yAlign: 'start' };
+            }
+        }
+
+        function drawLabelInCell(ctx, text, cellX, cellY, cellW, cellH, pos, fontSize, fontFamily, color) {
+            if (!text) return;
+
+            const padX = 8, padY = 6;
+            const margin = 10;
+
+            ctx.save();
+            ctx.font = `${fontSize}px ${fontFamily}`;
+            ctx.textBaseline = 'top';
+
+            const metrics = ctx.measureText(text);
+            const textW = metrics.width;
+            const textH = fontSize;
+
+            const boxW = textW + padX * 2;
+            const boxH = textH + padY * 2;
+
+            const { xAlign, yAlign } = labelAnchor(pos);
+
+            const x = (xAlign === 'start')
+                ? cellX + margin
+                : cellX + cellW - margin - boxW;
+
+            const y = (yAlign === 'start')
+                ? cellY + margin
+                : cellY + cellH - margin - boxH;
+
+            ctx.fillStyle = 'rgba(255,255,255,0.7)';
+            ctx.fillRect(x, y, boxW, boxH);
+
+            ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+            ctx.strokeRect(x, y, boxW, boxH);
+
+            ctx.fillStyle = color;
+            ctx.fillText(text, x + padX, y + padY);
+
+            ctx.restore();
+        }
+
+        combineBtn.addEventListener('click', async () => {
             const file1 = document.getElementById('file1').files[0];
             const file2 = document.getElementById('file2').files[0];
+
             const orientation = document.querySelector('input[name="orientation"]:checked').value;
             const alignment = document.getElementById('alignment').value;
+
             const textColor = document.getElementById('textColor').value;
             const fontFamily = document.getElementById('fontFamily').value;
-            const fontSize = document.getElementById('fontSize').value;
+            const fontSize = parseInt(document.getElementById('fontSize').value, 10);
+
+            const label1 = (document.getElementById('label1')?.value ?? 'before').trim();
+            const label2 = (document.getElementById('label2')?.value ?? 'after').trim();
+            const labelPos = document.getElementById('labelPos')?.value ?? 'top-left';
 
             if (!file1 || !file2) {
                 alert('Please upload both images.');
                 return;
             }
 
-            const img1 = new Image();
-            const img2 = new Image();
             const canvas = document.getElementById('canvas');
             const ctx = canvas.getContext('2d');
             const preview = document.getElementById('preview');
             const link = document.getElementById('downloadLink');
 
-            img1.onload = () => {
-                img2.onload = () => {
-                    // Calculate target dimensions
-                    const targetWidth = Math.max(img1.width, img2.width);
-                    const targetHeight = Math.max(img1.height, img2.height);
+            const url1 = URL.createObjectURL(file1);
+            const url2 = URL.createObjectURL(file2);
 
-                    // Create temporary canvases to resize the images
-                    const tmpCanvas1 = document.createElement('canvas');
-                    const tmpCanvas2 = document.createElement('canvas');
+            const img1 = new Image();
+            const img2 = new Image();
+            img1.decoding = 'async';
+            img2.decoding = 'async';
 
-                    tmpCanvas1.width = targetWidth;
-                    tmpCanvas1.height = targetHeight;
+            const loadImage = (img, url) =>
+                new Promise((resolve, reject) => {
+                    img.onload = resolve;
+                    img.onerror = reject;
+                    img.src = url;
+                });
 
-                    tmpCanvas2.width = targetWidth;
-                    tmpCanvas2.height = targetHeight;
+            try {
+                await Promise.all([loadImage(img1, url1), loadImage(img2, url2)]);
 
-                    const tmpCtx1 = tmpCanvas1.getContext('2d');
-                    const tmpCtx2 = tmpCanvas2.getContext('2d');
+                // Shared cell size
+                const cellW = Math.max(img1.naturalWidth, img2.naturalWidth);
+                const cellH = Math.max(img1.naturalHeight, img2.naturalHeight);
 
-                    tmpCtx1.drawImage(img1, 0, 0, targetWidth, targetHeight);
-                    tmpCtx2.drawImage(img2, 0, 0, targetWidth, targetHeight);
+                // Contain scale (no stretching)
+                const a = fitContain(img1.naturalWidth, img1.naturalHeight, cellW, cellH);
+                const b = fitContain(img2.naturalWidth, img2.naturalHeight, cellW, cellH);
 
-                    let offset1 = 0;
-                    let offset2 = 0;
+                if (orientation === 'vertical') {
+                    canvas.width = cellW;
+                    canvas.height = cellH * 2;
 
-                    if (orientation === 'vertical') {
-                        canvas.width = targetWidth;
-                        canvas.height = targetHeight * 2;
+                    // alignment affects X (left/center/right) inside each cell
+                    const ax = computeOffset(cellW, a.w, alignment);
+                    const bx = computeOffset(cellW, b.w, alignment);
 
-                        if (alignment === 'center') {
-                            offset1 = 0;
-                            offset2 = 0;
-                        } else if (alignment === 'end') {
-                            offset1 = 0;
-                            offset2 = 0;
-                        }
+                    // center vertically inside each cell
+                    const ay = computeOffset(cellH, a.h, 'center');
+                    const by = computeOffset(cellH, b.h, 'center');
 
-                        ctx.drawImage(tmpCanvas1, offset1, 0);
-                        ctx.fillStyle = textColor;
-                        ctx.font = `${fontSize}px ${fontFamily}`;
-                        ctx.fillText("before", offset1 + 10, parseInt(fontSize, 10));  // Text on the first image
+                    // cell 1 (top)
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    ctx.drawImage(img1, ax, ay, a.w, a.h);
+                    drawLabelInCell(ctx, label1, 0, 0, cellW, cellH, labelPos, fontSize, fontFamily, textColor);
 
-                        ctx.drawImage(tmpCanvas2, offset2, targetHeight);
-                        ctx.fillText("after", offset2 + 10, targetHeight + parseInt(fontSize, 10));  // Text on the second image
-                    } else {
-                        canvas.width = targetWidth * 2;
-                        canvas.height = targetHeight;
+                    // cell 2 (bottom)
+                    const y2 = cellH;
+                    ctx.drawImage(img2, bx, y2 + by, b.w, b.h);
+                    drawLabelInCell(ctx, label2, 0, y2, cellW, cellH, labelPos, fontSize, fontFamily, textColor);
 
-                        if (alignment === 'center') {
-                            offset1 = 0;
-                            offset2 = 0;
-                        } else if (alignment === 'end') {
-                            offset1 = 0;
-                            offset2 = 0;
-                        }
+                } else {
+                    canvas.width = cellW * 2;
+                    canvas.height = cellH;
 
-                        ctx.drawImage(tmpCanvas1, 0, offset1);
-                        ctx.fillStyle = textColor;
-                        ctx.font = `${fontSize}px ${fontFamily}`;
-                        ctx.fillText("before", 10, offset1 + parseInt(fontSize, 10));  // Text on the first image
+                    // alignment affects Y (top/center/bottom) inside each cell
+                    const ay = computeOffset(cellH, a.h, alignment);
+                    const by = computeOffset(cellH, b.h, alignment);
 
-                        ctx.drawImage(tmpCanvas2, targetWidth, offset2);
-                        ctx.fillText("after", targetWidth + 10, offset2 + parseInt(fontSize, 10));  // Text on the second image
-                    }
+                    // center horizontally inside each cell
+                    const ax = computeOffset(cellW, a.w, 'center');
+                    const bx = computeOffset(cellW, b.w, 'center');
 
-                    const dataURL = canvas.toDataURL('image/png');
-                    preview.src = dataURL;  // Show the preview of the combined image
-                    link.href = dataURL;
-                    link.style.display = 'inline';  // Show the download link
-                };
+                    // cell 1 (left)
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    ctx.drawImage(img1, ax, ay, a.w, a.h);
+                    drawLabelInCell(ctx, label1, 0, 0, cellW, cellH, labelPos, fontSize, fontFamily, textColor);
 
-                img2.src = URL.createObjectURL(file2);
-            };
+                    // cell 2 (right)
+                    const x2 = cellW;
+                    ctx.drawImage(img2, x2 + bx, by, b.w, b.h);
+                    drawLabelInCell(ctx, label2, x2, 0, cellW, cellH, labelPos, fontSize, fontFamily, textColor);
+                }
 
-            img1.src = URL.createObjectURL(file1);
+                const dataURL = canvas.toDataURL('image/png');
+                preview.src = dataURL;
+                link.href = dataURL;
+                link.style.display = 'inline';
+            } catch (e) {
+                console.error(e);
+                alert('Failed to load one of the images.');
+            } finally {
+                URL.revokeObjectURL(url1);
+                URL.revokeObjectURL(url2);
+            }
         });
     </script>
 </body>
